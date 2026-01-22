@@ -1,4 +1,4 @@
-# Asynchronous FIFO (CDC-Safe) - Gray Pointers + 2FF Synchronizers
+# Asynchronous FIFO (CDC) - Gray Pointers + 2FF Synchronizers
 
 A parameterized **dual-clock asynchronous FIFO** in SystemVerilog with:
 - Independent **write clock** and **read clock**
