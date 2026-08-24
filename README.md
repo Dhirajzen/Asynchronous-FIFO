@@ -114,8 +114,16 @@ write-side properties on `w_clk`, read-side on `r_clk`.
 |---|---|
 | `a_stage1` / `a_stage2` | The pipeline is genuinely **two flops deep**, stage by stage — the most common CDC review finding is a "two-flop" synchronizer quietly optimised down to one. |
 | `a_two_flop_latency` | End-to-end latency is **exactly two** destination-domain clocks — not fewer (missing flop), not more (staler than the flag logic assumes). |
-| `a_sync_gray` | The pointer still looks like Gray code *after* the crossing. |
 | `a_no_x` | No X inside the synchronizer pipeline. |
+
+All `$past`-based properties above are gated on a small **reset-settle
+counter** so they never evaluate against stale history spanning a reset
+boundary. An earlier version also asserted that the synchronized pointer
+changes by at most one bit per *destination-domain* clock — that only holds
+when both clocks tick at the same rate, so it false-fired on every non-1:1
+clock-ratio scenario in simulation and was removed; the correct one-bit-per
+-clock Gray check lives on each pointer's own native clock (`a_wptr_gray`
+/ `a_rptr_gray` above).
 
 Cover properties record that the interesting corners were actually reached —
 `full` asserted, `empty` asserted, write-while-full, read-while-empty,
