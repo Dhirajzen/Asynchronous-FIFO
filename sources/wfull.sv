@@ -1,4 +1,4 @@
-module full
+module wfull
 #(parameter WIDTH = 8,
   parameter DEPTH = 16
 )

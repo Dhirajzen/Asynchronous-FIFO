@@ -13,13 +13,18 @@ module top #(
     output logic [WIDTH-1:0] rdata
 );
 
+    initial begin
+        if ((DEPTH <= 0) || ((DEPTH & (DEPTH - 1)) != 0))
+            $fatal(1, "top: DEPTH=%0d must be a power of two - required by the MSB-invert FULL/EMPTY comparison", DEPTH);
+    end
+
     wire [$clog2(DEPTH)-1:0] waddr, raddr;
     wire [$clog2(DEPTH):0] wptr, rptr, wsync_ptr2, rsync_ptr2;
 
     sync_r2w #(DEPTH) sync_r2w (.*);
     sync_w2r #(DEPTH) sync_w2r (.*);
     fifo_mem #(WIDTH, DEPTH) fifomem (.*);
-    full #(WIDTH, DEPTH) full_1 (.*);
-    empty #(WIDTH, DEPTH) empty_1 (.*);
+    wfull  #(WIDTH, DEPTH) u_wfull  (.*);
+    rempty #(WIDTH, DEPTH) u_rempty (.*);
 
 endmodule

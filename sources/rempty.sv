@@ -1,4 +1,4 @@
-module empty
+module rempty
 #(
     parameter WIDTH = 8,
     parameter DEPTH = 16
