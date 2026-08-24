@@ -3,7 +3,7 @@
 
 sources/fifo_mem.sv
 sources/wfull.sv
-sources/empty.sv
+sources/rempty.sv
 sources/sync_r2w.sv
 sources/sync_w2r.sv
 sources/top.sv

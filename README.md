@@ -22,6 +22,10 @@ In an async FIFO, the **read and write pointers live in different clock domains*
    - **FULL** in the write domain using synchronized read pointer
    - **EMPTY** in the read domain using synchronized write pointer
 
+`DEPTH` must be a power of two for the MSB-invert FULL/EMPTY comparison to be
+correct; `top.sv` enforces this at elaboration time with an `initial`-block
+assertion that `$fatal`s on an invalid `DEPTH`.
+
 ---
 
 ## File Layout
@@ -31,7 +35,7 @@ In an async FIFO, the **read and write pointers live in different clock domains*
 - `sync_r2w.sv` - 2FF synchronizer (read pointer Gray → write clock domain)
 - `sync_w2r.sv` - 2FF synchronizer (write pointer Gray → read clock domain)
 - `wfull.sv` - Write pointer + FULL detection logic
-- `empty.sv` - Read pointer + EMPTY detection logic
+- `rempty.sv` - Read pointer + EMPTY detection logic
 - `fifo_sva.sv` - Assertion checker for the FIFO (Gray integrity, overflow/underflow, flag rules)
 - `sync_sva.sv` - Assertion checker for a two-flop CDC synchronizer
 - `bind_sva.sv` - `bind` statements attaching both checkers to the RTL
@@ -75,7 +79,7 @@ In an async FIFO, the **read and write pointers live in different clock domains*
   - **Gray write pointer** (for CDC transfer)
 - FULL detection compares the **next write Gray pointer** with the synchronized read Gray pointer using the standard MSB-invert technique
 
-### 5) `empty.sv` - Read Pointer + EMPTY Flag
+### 5) `rempty.sv` - Read Pointer + EMPTY Flag
 - Maintains:
   - local **binary read pointer**
   - **Gray read pointer**
@@ -168,4 +172,10 @@ make clean
 ```
 
 Simulator flags in the `Makefile` may need adjusting for a given site install.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
 

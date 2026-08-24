@@ -6,7 +6,7 @@ module sync_w2r
 
     logic [$clog2(DEPTH):0] rsync_ptr1;
 
-    always @(posedge r_clk or negedge rst_n) begin
+    always_ff @(posedge r_clk or negedge rst_n) begin
         if (~rst_n) begin
             rsync_ptr2 <= '0;
             rsync_ptr1 <= '0;
