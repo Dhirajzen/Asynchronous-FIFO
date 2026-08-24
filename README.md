@@ -5,7 +5,10 @@ A parameterized **dual-clock asynchronous FIFO** in SystemVerilog with:
 - **Gray-code read/write pointers** to reduce CDC risk
 - **Two-flop synchronizers** for pointer crossing (R→W and W→R)
 - **Full/Empty flag generation** using synchronized Gray pointers
-- Simple self-checking testbench + **VCD waveform dump**
+- **SVA assertion suite** (`bind`-attached, so the RTL stays synthesis-clean) covering
+  Gray-code integrity, two-flop synchronizer latency, and overflow/underflow protection
+- **Self-checking testbench** sweeping five write/read clock ratios with a
+  reference-queue scoreboard and an earned pass/fail verdict
 
 ---
 
@@ -29,7 +32,11 @@ In an async FIFO, the **read and write pointers live in different clock domains*
 - `sync_w2r.sv` - 2FF synchronizer (write pointer Gray → read clock domain)
 - `wfull.sv` - Write pointer + FULL detection logic
 - `empty.sv` - Read pointer + EMPTY detection logic
-- `testbench.sv` - Dual-clock testbench + reference queue + VCD dump
+- `fifo_sva.sv` - Assertion checker for the FIFO (Gray integrity, overflow/underflow, flag rules)
+- `sync_sva.sv` - Assertion checker for a two-flop CDC synchronizer
+- `bind_sva.sv` - `bind` statements attaching both checkers to the RTL
+- `testbench.sv` - Dual-clock self-checking testbench + reference-queue scoreboard
+- `filelist.f` / `Makefile` - Build and run infrastructure (VCS / Xcelium / Questa)
 
 ---
 
@@ -76,19 +83,89 @@ In an async FIFO, the **read and write pointers live in different clock domains*
 
 ---
 
+## Assertions (`fifo_sva.sv`, `sync_sva.sv`)
+
+Assertions are kept out of the RTL entirely and attached with `bind`
+(`bind_sva.sv`), so every design file still compiles for synthesis unchanged
+while the checkers reach internal signals — the Gray pointers, and the first
+stage inside each synchronizer — that no module port exposes.
+
+Each property is clocked in the domain that owns the signals it checks:
+write-side properties on `w_clk`, read-side on `r_clk`.
+
+**FIFO-level (`fifo_sva.sv`)**
+
+| Assertion | What it proves |
+|---|---|
+| `a_wptr_gray` / `a_rptr_gray` | Pointers change by at most **one bit per clock**. The entire CDC scheme depends on this: if two bits ever moved together, a synchronizer sampling mid-transition could latch a value that was never actually held. |
+| `a_no_overflow` | A write request while `full` never advances the write pointer (no silent overwrite of unread data). |
+| `a_no_underflow` | A read request while `empty` never advances the read pointer (no stale/garbage reads). |
+| `a_not_full_and_empty` | `full` and `empty` are never asserted together. |
+| `a_reset_empty` / `a_reset_not_full` | Reset leaves the FIFO empty, not full. |
+| `a_no_x_*` | No X propagates onto the flags, the pointers, or `rdata` during an active read. |
+
+**Synchronizer-level (`sync_sva.sv`, bound onto *both* crossings)**
+
+| Assertion | What it proves |
+|---|---|
+| `a_stage1` / `a_stage2` | The pipeline is genuinely **two flops deep**, stage by stage — the most common CDC review finding is a "two-flop" synchronizer quietly optimised down to one. |
+| `a_two_flop_latency` | End-to-end latency is **exactly two** destination-domain clocks — not fewer (missing flop), not more (staler than the flag logic assumes). |
+| `a_sync_gray` | The pointer still looks like Gray code *after* the crossing. |
+| `a_no_x` | No X inside the synchronizer pipeline. |
+
+Cover properties record that the interesting corners were actually reached —
+`full` asserted, `empty` asserted, write-while-full, read-while-empty,
+simultaneous read and write, and both flags releasing again.
+
+---
+
 ## Testbench (`testbench.sv`)
 
-The testbench:
-- Generates two clocks:
-  - `w_clk` period 10
-  - `r_clk` period 20
-- Performs writes and reads while observing `full` and `empty`
-- Uses a **SystemVerilog queue** as a lightweight reference model
-- Dumps waveforms:
-  - Output file: `fifo.vcd`
+A self-checking, multi-scenario testbench:
 
-### Expected Behavior
-- No write should occur when `full == 1`
-- No read should occur when `empty == 1`
-- Data should be read out in the same order it was written (FIFO ordering)
+- **Programmable clocks.** Half-periods are variables, so one run sweeps five
+  write/read ratios, including a deliberately **non-harmonic** pair (5.0 ns vs
+  3.5 ns) whose phase relationship drifts continuously — that drift sweeps the
+  whole range of edge alignments between the domains instead of testing one
+  fixed skew.
+- **Race-free monitors.** Both monitors sample through clocking blocks with
+  `input #1step` (preponed region), so the checker sees exactly the values the
+  DUT's own flops acted on and can never race a non-blocking update.
+- **Reference-queue scoreboard.** Every accepted write is pushed, every
+  performed read is popped and compared, catching data corruption *and*
+  ordering violations.
+- **Drain check.** Each scenario ends by halting writes, reading flat out, and
+  requiring the FIFO to empty — any item written but never returned is a
+  failure.
+
+### Scenarios
+
+| Scenario | Ratio (w:r half-period) | Purpose |
+|---|---|---|
+| balanced 1:1 | 5.0 : 5.0 | baseline random traffic |
+| fast write / slow read | 5.0 : 15.0 | drives the **FULL** boundary |
+| slow write / fast read | 15.0 : 5.0 | drives the **EMPTY** boundary |
+| non-harmonic phase drift | 5.0 : 3.5 | continuously drifting edge alignment |
+| FULL boundary hammer | 5.0 : 25.0 | sustained backpressure against `full` |
+
+### Pass criteria
+
+The run reports **PASS** only if it earns it. It fails on any data mismatch,
+underflow, residual data after drain, assertion failure, or global timeout —
+and also if no traffic was observed, or if `full`/`empty` were never reached
+(an untested corner is not a passing corner).
+
+---
+
+## Running
+
+```bash
+make vcs        # Synopsys VCS
+make xrun       # Cadence Xcelium
+make questa     # Siemens Questa
+make vcs DUMP=1 # ... and dump waveforms to fifo.vcd
+make clean
+```
+
+Simulator flags in the `Makefile` may need adjusting for a given site install.
 
