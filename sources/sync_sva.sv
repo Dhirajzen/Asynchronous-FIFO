@@ -18,18 +18,32 @@ module sync_sva #(
 );
 
   // -------------------------------------------------------------------------
+  // Reset-settle guard. `disable iff (!rst_n)` suppresses the *check* during
+  // reset, but $past still looks back across the reset boundary into whatever
+  // stale value it last held - so the first cycle(s) after rst_n deasserts can
+  // spuriously fail a $past-based property. settle_cnt counts valid clocks
+  // since reset (saturating at 2) so each property below can require enough
+  // real history before trusting its $past() terms.
+  // -------------------------------------------------------------------------
+  logic [1:0] settle_cnt;
+
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n)                    settle_cnt <= 2'd0;
+    else if (settle_cnt != 2'd2)   settle_cnt <= settle_cnt + 2'd1;
+
+  // -------------------------------------------------------------------------
   // Stage-by-stage pipeline behaviour. Together these prove the synchronizer
   // is genuinely two flops deep - the single most common CDC review finding is
   // a "two-flop" synchronizer that has quietly been optimised down to one.
   // -------------------------------------------------------------------------
   property p_stage1;
-    @(posedge clk) disable iff (!rst_n) sync1 == $past(din);
+    @(posedge clk) disable iff (!rst_n || settle_cnt < 2'd1) sync1 == $past(din);
   endproperty
   a_stage1: assert property (p_stage1)
     else $error("CDC-SVA: synchronizer stage 1 did not capture din");
 
   property p_stage2;
-    @(posedge clk) disable iff (!rst_n) sync2 == $past(sync1);
+    @(posedge clk) disable iff (!rst_n || settle_cnt < 2'd1) sync2 == $past(sync1);
   endproperty
   a_stage2: assert property (p_stage2)
     else $error("CDC-SVA: synchronizer stage 2 did not capture stage 1");
@@ -40,21 +54,26 @@ module sync_sva #(
   // full/empty comparison is working off data staler than the design assumes.
   // -------------------------------------------------------------------------
   property p_two_flop_latency;
-    @(posedge clk) disable iff (!rst_n) sync2 == $past(din, 2);
+    @(posedge clk) disable iff (!rst_n || settle_cnt < 2'd2) sync2 == $past(din, 2);
   endproperty
   a_two_flop_latency: assert property (p_two_flop_latency)
     else $error("CDC-SVA: synchronizer latency is not exactly two clocks");
 
   // -------------------------------------------------------------------------
-  // The synchronized pointer must still look like Gray code on this side of
-  // the crossing. If more than one bit ever moves at once downstream, the
-  // crossing has corrupted the pointer.
+  // NOTE: an earlier version of this file also asserted that `sync2` changes
+  // by at most one bit per *destination-domain* clock (mirroring the
+  // source-domain Gray checks in fifo_sva.sv). That property only holds when
+  // the source and destination clocks tick at the same rate: whenever they
+  // don't, several source-domain Gray-code increments can legitimately land
+  // between two destination-domain samples, so `sync2` correctly jumps by
+  // more than one bit. Simulation on Cadence Xcelium confirmed this property
+  // fired on every non-1:1 clock-ratio scenario while the scoreboard's
+  // independent, per-item data compare stayed at zero mismatches - i.e. the
+  // pointer data was never actually corrupted, only this assertion was wrong.
+  // The correct one-bit-per-clock Gray check belongs on each pointer's own
+  // native clock (see a_wptr_gray/a_rptr_gray in fifo_sva.sv), where the
+  // property is actually guaranteed, so it was removed from here.
   // -------------------------------------------------------------------------
-  property p_sync_gray;
-    @(posedge clk) disable iff (!rst_n) $onehot0(sync2 ^ $past(sync2));
-  endproperty
-  a_sync_gray: assert property (p_sync_gray)
-    else $error("CDC-SVA: synchronized pointer changed by more than one bit (now %b)", sync2);
 
   // -------------------------------------------------------------------------
   // No unknowns propagating through the crossing after reset.

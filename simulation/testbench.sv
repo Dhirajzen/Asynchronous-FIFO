@@ -56,7 +56,8 @@ module testbench;
   int n_empty_seen;                    // cycles observed with EMPTY asserted
 
   bit mon_en;                          // monitors active
-  bit drv_en;                          // stimulus active
+  bit wr_en;                           // write stimulus active
+  bit rd_en;                           // read stimulus active
   int wr_pct;                          // write-request probability, percent
   int rd_pct;                          // read-request probability, percent
 
@@ -124,7 +125,7 @@ module testbench;
       wr_rq <= 1'b0;
       wdata <= '0;
     end
-    else if (drv_en) begin
+    else if (wr_en) begin
       wr_rq <= ($urandom_range(99) < wr_pct);
       wdata <= $urandom_range((1 << WIDTH) - 1);
     end
@@ -135,7 +136,7 @@ module testbench;
 
   always @(posedge r_clk or negedge rst_n) begin
     if (!rst_n)          rd_rq <= 1'b0;
-    else if (drv_en)     rd_rq <= ($urandom_range(99) < rd_pct);
+    else if (rd_en)      rd_rq <= ($urandom_range(99) < rd_pct);
     else                 rd_rq <= 1'b0;
   end
 
@@ -155,7 +156,8 @@ module testbench;
              name, wh, rh, wpct, rpct);
 
     // Quiesce and reset before retuning the clocks.
-    drv_en = 1'b0;
+    wr_en  = 1'b0;
+    rd_en  = 1'b0;
     mon_en = 1'b0;
     rst_n  = 1'b0;
     wr_pct = 0;
@@ -174,11 +176,26 @@ module testbench;
     wr_pct = wpct;
     rd_pct = rpct;
     mon_en = 1'b1;
-    drv_en = 1'b1;
+    wr_en  = 1'b1;
+    rd_en  = 1'b1;
     repeat (n_cycles) @(posedge w_clk);
 
-    // Drain phase: stop writing, read flat out, and require the FIFO to empty.
+    // Drain phase: stop writing FIRST and let the shutdown settle on the
+    // write-clock domain before trusting model.size() for drain completion.
+    // wr_en is a boolean gate (not a probability), so once the generator has
+    // sampled it low, no further writes can be accepted - but the edge that
+    // flips it races against the generator's own read of the *old* wr_pct on
+    // this same w_clk edge (two processes woken by the same edge have no
+    // guaranteed relative order in SystemVerilog). Waiting two more w_clk
+    // cycles guarantees that race has resolved and any write still in flight
+    // has completed, so nothing new can land in `model` after this point.
+    wr_en  = 1'b0;
     wr_pct = 0;
+    repeat (2) @(posedge w_clk);
+
+    // Read flat out and require the FIFO to actually empty. Reads (rd_en)
+    // stay live for the entire wait, unlike the old shared-enable version
+    // that could cut reads off before every write was drained.
     rd_pct = 100;
     drain_limit = (n_cycles * 4) + 500;
 
@@ -195,7 +212,7 @@ module testbench;
     join_any
     disable fork;
 
-    drv_en = 1'b0;
+    rd_en = 1'b0;
     repeat (4) @(posedge r_clk);
     mon_en = 1'b0;
 
@@ -250,7 +267,8 @@ module testbench;
     // blocks below - their asynchronous reset branch clears them at time 0, so
     // initialising them here too would put two processes on the same variable.
     rst_n  = 1'b0;
-    drv_en = 1'b0;
+    wr_en  = 1'b0;
+    rd_en  = 1'b0;
     mon_en = 1'b0;
 
     //             name                    w_half r_half  wr%  rd%  cycles
